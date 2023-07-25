@@ -25,11 +25,10 @@ class LLAMA2_WRAPPER:
         model_name = config.get("model_name")
         load_in_8bit = config.get("load_in_8bit", True)
         load_in_4bit = config.get("load_in_4bit", False)
-        llama_cpp = config.get("llama_cpp", False)
-        if llama_cpp:
+        if llama_cpp := config.get("llama_cpp", False):
             from llama_cpp import Llama
 
-            model = Llama(
+            return Llama(
                 model_path=model_name,
                 n_ctx=config.get("MAX_INPUT_TOKEN_LENGTH"),
                 n_batch=config.get("MAX_INPUT_TOKEN_LENGTH"),
@@ -37,7 +36,7 @@ class LLAMA2_WRAPPER:
         elif load_in_4bit:
             from auto_gptq import AutoGPTQForCausalLM
 
-            model = AutoGPTQForCausalLM.from_quantized(
+            return AutoGPTQForCausalLM.from_quantized(
                 model_name,
                 use_safetensors=True,
                 trust_remote_code=True,
@@ -49,21 +48,19 @@ class LLAMA2_WRAPPER:
             import torch
             from transformers import AutoModelForCausalLM
 
-            model = AutoModelForCausalLM.from_pretrained(
+            return AutoModelForCausalLM.from_pretrained(
                 model_name,
                 device_map="auto",
                 torch_dtype=torch.float16,
                 load_in_8bit=load_in_8bit,
             )
-        return model
 
     @classmethod
     def create_llama2_tokenizer(cls, config):
         model_name = config.get("model_name")
         from transformers import AutoTokenizer
 
-        tokenizer = AutoTokenizer.from_pretrained(model_name)
-        return tokenizer
+        return AutoTokenizer.from_pretrained(model_name)
 
     def get_input_token_length(
         self, message: str, chat_history: list[tuple[str, str]], system_prompt: str
@@ -88,6 +85,7 @@ class LLAMA2_WRAPPER:
         top_k: int = 50,
     ) -> Iterator[str]:
         prompt = get_prompt(message, chat_history, system_prompt)
+        outputs = []
         if self.config.get("llama_cpp"):
             inputs = self.model.tokenize(bytes(prompt, "utf-8"))
             generate_kwargs = dict(
@@ -97,7 +95,6 @@ class LLAMA2_WRAPPER:
             )
 
             generator = self.model.generate(inputs, **generate_kwargs)
-            outputs = []
             for token in generator:
                 if token == self.model.token_eos():
                     break
@@ -126,7 +123,6 @@ class LLAMA2_WRAPPER:
             t = Thread(target=self.model.generate, kwargs=generate_kwargs)
             t.start()
 
-            outputs = []
             for text in streamer:
                 outputs.append(text)
                 yield "".join(outputs)
@@ -136,7 +132,9 @@ def get_prompt(
     message: str, chat_history: list[tuple[str, str]], system_prompt: str
 ) -> str:
     texts = [f"[INST] <<SYS>>\n{system_prompt}\n<</SYS>>\n\n"]
-    for user_input, response in chat_history:
-        texts.append(f"{user_input.strip()} [/INST] {response.strip()} </s><s> [INST] ")
+    texts.extend(
+        f"{user_input.strip()} [/INST] {response.strip()} </s><s> [INST] "
+        for user_input, response in chat_history
+    )
     texts.append(f"{message.strip()} [/INST]")
     return "".join(texts)
